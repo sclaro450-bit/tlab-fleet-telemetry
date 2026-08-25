@@ -1,0 +1,18 @@
+FROM golang:1.24 AS builder
+
+WORKDIR /src
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux go build -o /fleet-telemetry ./cmd
+
+FROM alpine:3.21
+
+RUN mkdir -p /etc/fleet-telemetry /etc/certs/server
+
+COPY --from=builder /fleet-telemetry /fleet-telemetry
+COPY config/config.json /etc/fleet-telemetry/config.json
+
+EXPOSE 443
+
+ENTRYPOINT ["/fleet-telemetry"]
+CMD ["-config=/etc/fleet-telemetry/config.json"]
