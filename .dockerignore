@@ -1,0 +1,15 @@
+.git
+.github
+.idea
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+certs/
+secrets/
+coverage.html
+*.out
+test/integration/test-certs/

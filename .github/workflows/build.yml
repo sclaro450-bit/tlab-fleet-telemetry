@@ -57,5 +57,11 @@ jobs:
     - name: Build Railway container
       run: docker build --tag fleet-telemetry:railway-test --file Dockerfile.railway .
 
+    - name: Validate proxy entrypoint
+      run: sh -n deploy/proxy-entrypoint.sh
+
+    - name: Build Vehicle Command Proxy container
+      run: docker build --tag vehicle-command-proxy:test --file Dockerfile.proxy .
+
     - name: Integration Test
       run: make integration

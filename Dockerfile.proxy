@@ -1,0 +1,44 @@
+# Tesla's Vehicle Command Proxy signs Fleet Telemetry configurations with the
+# application's private key. It is a separate persistent Railway service.
+FROM golang:1.26-bookworm AS build
+
+ARG VEHICLE_COMMAND_COMMIT=f97fa1e4bf617a364c72b85cb5d859528abeda67
+ARG LEGO_VERSION=v4.35.2
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src/vehicle-command
+RUN git clone https://github.com/teslamotors/vehicle-command.git . \
+    && git checkout "${VEHICLE_COMMAND_COMMIT}"
+
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
+    -o /out/tesla-http-proxy ./cmd/tesla-http-proxy
+
+RUN CGO_ENABLED=0 go install github.com/go-acme/lego/v4/cmd/lego@${LEGO_VERSION} \
+    && cp /go/bin/lego /out/lego
+
+FROM alpine:3.22
+
+RUN apk add --no-cache ca-certificates curl openssl su-exec tini \
+    && addgroup -S tesla \
+    && adduser -S -G tesla -h /var/lib/tesla tesla \
+    && mkdir -p /data/lego /run/tesla \
+    && chown -R tesla:tesla /data/lego /run/tesla
+
+COPY --from=build /out/tesla-http-proxy /usr/local/bin/tesla-http-proxy
+COPY --from=build /out/lego /usr/local/bin/lego
+COPY deploy/proxy-entrypoint.sh /usr/local/bin/proxy-entrypoint
+
+RUN chmod 0755 /usr/local/bin/proxy-entrypoint
+
+ENV TESLA_HTTP_PROXY_HOST=0.0.0.0 \
+    TESLA_HTTP_PROXY_PORT=4443 \
+    TESLA_HTTP_PROXY_TIMEOUT=15s \
+    TESLA_KEY_FILE=/run/tesla/fleet-key.pem \
+    ACME_STORAGE=/data/lego
+
+EXPOSE 4443
+
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/proxy-entrypoint"]

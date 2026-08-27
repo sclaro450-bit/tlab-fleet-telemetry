@@ -95,6 +95,36 @@ By configuring `fleet_telemetry_config`, individual owners and fleet operators c
 12. Wait for `synced` to be true when getting [fleet_telemetry_config](https://developer.tesla.com/docs/fleet-api/endpoints/vehicle-endpoints#fleet-telemetry-config-get).
 13. Vehicles will connect and stream data directly to the hosted fleet-telemetry server. To diagnose connection or streaming problems use the [fleet_telemetry_errors](https://developer.tesla.com/docs/fleet-api/endpoints/partner-endpoints#fleet-telemetry-errors) endpoint.
 
+### Railway Vehicle Command Proxy
+
+Fleet Telemetry configuration must be signed with the private key paired to the
+vehicle. Deploy `Dockerfile.proxy` as a second Railway service; do not deploy it
+on Vercel and do not commit the private key.
+
+Required Railway settings:
+
+- Service name: `vehicle-command-proxy`
+- Source repository: this repository, branch `main`
+- Dockerfile path: `Dockerfile.proxy`
+- TCP application port: `4443`
+- Persistent volume mount: `/data/lego`
+- DNS name: a dedicated name such as `commands.tlabcontrol.com`, pointing to
+  the Railway TCP proxy domain
+
+Required variables:
+
+- `PROXY_DOMAIN=commands.tlabcontrol.com`
+- `ACME_EMAIL=<operations email>`
+- `CLOUDFLARE_API_TOKEN=<DNS edit token>`
+- `TESLA_PRIVATE_KEY_B64=<base64 of the paired EC private key>`
+- `TESLA_PUBLIC_KEY_URL=https://tlabcontrol.com/.well-known/appspecific/com.tesla.3p.public-key.pem`
+- `TESLA_HTTP_PROXY_PORT=4443`
+
+The entrypoint validates that the private key is a valid EC key and, when
+`TESLA_PUBLIC_KEY_URL` is configured, refuses to start unless it matches the
+registered public key. It obtains and renews a publicly trusted certificate
+through Cloudflare DNS-01, then starts Tesla's official HTTP proxy.
+
 ### Install on Kubernetes with Helm Chart (recommended)
 For ease of installation and operation, run Fleet Telemetry on Kubernetes or a similar environment. Helm Charts help define, install, and upgrade applications on Kubernetes. A reference helm chart is available [here](https://github.com/teslamotors/helm-charts/blob/main/charts/fleet-telemetry/README.md).
 
