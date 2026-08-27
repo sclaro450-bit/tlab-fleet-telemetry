@@ -26,6 +26,14 @@ chmod 0600 "$TESLA_KEY_FILE"
 openssl ec -in "$TESLA_KEY_FILE" -check -noout >/dev/null 2>&1 \
   || configuration_error "the Tesla private key is not a valid EC private key"
 
+# OpenSSL accepts some legacy/binary EC encodings that Go's PEM decoder does
+# not. Normalize the same key material to SEC1 PEM for Tesla's official proxy.
+normalized_key=/run/tesla/fleet-key.normalized.pem
+openssl ec -in "$TESLA_KEY_FILE" -out "$normalized_key" -outform PEM >/dev/null 2>&1 \
+  || configuration_error "cannot normalize the Tesla private key to PEM"
+mv "$normalized_key" "$TESLA_KEY_FILE"
+chmod 0600 "$TESLA_KEY_FILE"
+
 if [ -n "${TESLA_PUBLIC_KEY_URL:-}" ]; then
   remote_key=/run/tesla/registered-public-key.pem
   derived_key=/run/tesla/derived-public-key.pem
