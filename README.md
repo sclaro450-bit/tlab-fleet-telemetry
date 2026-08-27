@@ -5,6 +5,47 @@
 # Tesla Fleet Telemetry
 ---------------------------------
 
+## Production deployment architecture
+
+Fleet Telemetry is a long-running WebSocket listener that requires direct mTLS
+from Tesla vehicles. It must run on a persistent service with a stable public
+TCP/TLS endpoint. Vercel is suitable for a dashboard, OAuth callbacks, and a
+control-plane API, but it is not the telemetry ingestion listener.
+
+This repository includes `Dockerfile.railway` and `railway.json` for the
+persistent listener. Configure Railway to use a TCP/custom-domain endpoint and
+make the public Tesla telemetry endpoint reachable on the port registered in
+the vehicle's `fleet_telemetry_config` (normally 443).
+
+Configuration precedence is:
+
+1. Environment variables
+2. The file selected by `CONFIG_FILE` or `-config`
+3. Safe non-secret defaults
+
+Supported runtime overrides:
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `HOST` | Listener bind address | `0.0.0.0` |
+| `PORT` | Internal telemetry listener port | `443` |
+| `STATUS_PORT` | Local HTTP health port | `8080` |
+| `LOG_LEVEL` | Structured log level | `info` |
+| `TELEMETRY_NAMESPACE` | Dispatcher topic prefix | `tesla_telemetry` |
+| `TLS_ENABLED` | Must remain `true` for Tesla telemetry | `true` |
+| `TLS_CERT_PATH` | Mounted server certificate chain | config file value |
+| `TLS_KEY_PATH` | Mounted server private key | config file value |
+| `TLS_CERT_PEM` | Certificate chain injected as a secret variable | empty |
+| `TLS_KEY_PEM` | Private key injected as a secret variable | empty |
+| `TLS_CA_PATH` | Optional additional client CA bundle | empty |
+
+Inject the TLS certificate and private key as Railway secret variables using
+`TLS_CERT_PEM` and `TLS_KEY_PEM`, or mount files and set the path variables.
+Never store private keys, tokens, or certificates in Git. The
+container runs as a non-root user and exposes a local `/healthz` endpoint on
+`STATUS_PORT`; its Docker health check becomes healthy only after configuration,
+dispatchers, and the mTLS listener are initialized.
+
 Fleet Telemetry is a server reference implementation for Tesla's telemetry protocol. It is the best way to get data from Tesla vehicles. Owners can allow registered applications to receive telemetry securely and directly from their vehicles. This reference implementation can be used by individual owners as is or by fleet operators who can extend it to aggregate data accross their fleet.
 
 The service handles device connectivity as well as receiving and storing transmitted data. Once configured, devices establish a WebSocket connection to push configurable telemetry records. Fleet Telemetry provides clients with ack, error, or rate limit responses. The application also provides an event stream to determine the vehicle connection state, which can be used as a proxy for vehicle online state.

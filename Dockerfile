@@ -12,9 +12,9 @@ RUN make install
 
 # build libzmq (dep of zmq datastore)
 WORKDIR /build
-RUN wget https://github.com/zeromq/libzmq/releases/download/v4.3.4/zeromq-4.3.4.tar.gz
-RUN tar -xvf zeromq-4.3.4.tar.gz
-WORKDIR /build/zeromq-4.3.4
+RUN wget https://github.com/zeromq/libzmq/releases/download/v4.3.5/zeromq-4.3.5.tar.gz
+RUN tar -xvf zeromq-4.3.5.tar.gz
+WORKDIR /build/zeromq-4.3.5
 RUN ./configure --enable-static --disable-shared --disable-Werror
 RUN make -j`nproc`
 RUN make install
@@ -26,10 +26,18 @@ ENV CGO_ENABLED=1
 ENV CGO_LDFLAGS="-lstdc++"
 
 RUN make
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /go/bin/healthcheck ./cmd/healthcheck
 
 # hadolint ignore=DL3006
 FROM gcr.io/distroless/cc-debian12:nonroot
 WORKDIR /
-COPY --from=build /go/bin/fleet-telemetry /
+COPY --from=build --chown=nonroot:nonroot /go/bin/fleet-telemetry /fleet-telemetry
+COPY --from=build --chown=nonroot:nonroot /go/bin/healthcheck /healthcheck
+COPY --from=build --chown=nonroot:nonroot /go/src/fleet-telemetry/config/config.json /etc/fleet-telemetry/config.json
 
-CMD ["/fleet-telemetry", "-config", "/etc/fleet-telemetry/config.json"]
+EXPOSE 443 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD ["/healthcheck"]
+
+ENTRYPOINT ["/fleet-telemetry"]
+CMD ["-config=/etc/fleet-telemetry/config.json"]

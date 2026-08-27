@@ -1,8 +1,16 @@
 package main
 
 import (
+	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	_ "go.uber.org/automaxprocs"
 
@@ -15,29 +23,34 @@ import (
 )
 
 func main() {
-	var err error
-
-	config, logger, err := config.LoadApplicationConfiguration()
-	if err != nil {
-		// logger is not available yet
-		panic(fmt.Sprintf("error=load_service_config value=\"%s\"", err.Error()))
+	if err := run(); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "fleet-telemetry startup failed: %v\n", err)
+		os.Exit(1)
 	}
+}
 
-	if config.Monitoring != nil && config.Monitoring.ProfilingPath != "" {
-		if config.Monitoring.ProfilerFile, err = os.Create(config.Monitoring.ProfilingPath); err != nil {
+func run() error {
+	serviceConfig, logger, err := config.LoadApplicationConfiguration()
+	if err != nil {
+		return fmt.Errorf("CONFIGURATION ERROR: %w", err)
+	}
+	if err := serviceConfig.ValidateRuntime(); err != nil {
+		return fmt.Errorf("CONFIGURATION ERROR: %w", err)
+	}
+	defer serviceConfig.MetricCollector.Shutdown()
+
+	if serviceConfig.Monitoring != nil && serviceConfig.Monitoring.ProfilingPath != "" {
+		if serviceConfig.Monitoring.ProfilerFile, err = os.Create(serviceConfig.Monitoring.ProfilingPath); err != nil {
 			logger.ErrorLog("profiling_file_error", err, nil)
-			config.Monitoring.ProfilingPath = ""
+			serviceConfig.Monitoring.ProfilingPath = ""
+		} else {
+			defer serviceConfig.Monitoring.ProfilerFile.Close()
 		}
-
-		defer func() {
-			config.MetricCollector.Shutdown()
-			_ = config.Monitoring.ProfilerFile.Close()
-		}()
 	}
 
-	airbrakeNotifier, _, err := config.CreateAirbrakeNotifier(logger)
+	airbrakeNotifier, _, err := serviceConfig.CreateAirbrakeNotifier(logger)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("configure Airbrake: %w", err)
 	}
 	if airbrakeNotifier != nil {
 		defer airbrakeNotifier.NotifyOnPanic()
@@ -47,7 +60,7 @@ func main() {
 			}
 		}()
 	}
-	panic(startServer(config, airbrakeNotifier, logger))
+	return startServer(serviceConfig, airbrakeNotifier, logger)
 }
 
 func startServer(config *config.Config, airbrakeNotifier *gobrake.Notifier, logger *logrus.Logger) (err error) {
@@ -56,9 +69,6 @@ func startServer(config *config.Config, airbrakeNotifier *gobrake.Notifier, logg
 
 	airbrakeHandler := airbrake.NewAirbrakeHandler(airbrakeNotifier)
 
-	if config.StatusPort > 0 {
-		monitoring.StartStatusServer(config, logger, airbrakeHandler)
-	}
 	if config.Monitoring != nil {
 		monitoring.StartServerMetrics(config, logger, registry)
 	}
@@ -73,10 +83,46 @@ func startServer(config *config.Config, airbrakeNotifier *gobrake.Notifier, logg
 	}
 
 	if server.TLSConfig, err = config.ExtractServiceTLSConfig(logger); err != nil {
-		return err
+		return fmt.Errorf("CONFIGURATION ERROR: initialize Tesla mTLS client verification: %w", err)
 	}
+	serverCertificate, err := tls.LoadX509KeyPair(config.TLS.ServerCert, config.TLS.ServerKey)
+	if err != nil {
+		return fmt.Errorf("CONFIGURATION ERROR: load TLS certificate and private key: %w", err)
+	}
+	server.TLSConfig.Certificates = []tls.Certificate{serverCertificate}
+	listener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return fmt.Errorf("telemetry listener bind failed on %s: %w", server.Addr, err)
+	}
+	tlsListener := tls.NewListener(listener, server.TLSConfig)
+	if config.StatusPort > 0 {
+		if err := monitoring.StartStatusServer(config, logger, airbrakeHandler); err != nil {
+			_ = listener.Close()
+			return err
+		}
+	}
+	logger.ActivityLog("telemetry_listener_configured", logrus.LogInfo{
+		"address":     server.Addr,
+		"tls_enabled": true,
+	})
 
-	err = server.ListenAndServeTLS(config.TLS.ServerCert, config.TLS.ServerKey)
+	serverErrors := make(chan error, 1)
+	go func() {
+		serverErrors <- server.Serve(tlsListener)
+	}()
+
+	shutdownSignals := make(chan os.Signal, 1)
+	signal.Notify(shutdownSignals, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(shutdownSignals)
+
+	select {
+	case err = <-serverErrors:
+	case receivedSignal := <-shutdownSignals:
+		logger.ActivityLog("shutdown_requested", logrus.LogInfo{"signal": receivedSignal.String()})
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err = server.Shutdown(shutdownContext)
+	}
 	for dispatcher, producer := range dispatchers {
 		logger.ActivityLog("attempting_to_close", logrus.LogInfo{"dispatcher": dispatcher})
 		// We don't care if this fails. If it does, we'll just continue on.
@@ -85,5 +131,11 @@ func startServer(config *config.Config, airbrakeNotifier *gobrake.Notifier, logg
 		}
 	}
 	logger.ActivityLog("stopped_server", nil)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("telemetry listener failed on %s: %w", server.Addr, err)
+	}
 	return err
 }

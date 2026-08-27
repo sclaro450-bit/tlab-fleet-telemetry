@@ -8,3 +8,15 @@ vendor/
 config-local.json
 temp
 test/integration/test-certs/
+
+# Runtime credentials and mounted secrets must never be committed.
+*.key
+*.pem
+*.p12
+*.pfx
+tls.crt
+tls.key
+secrets/
+.env
+.env.*
+!.env.example

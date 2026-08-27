@@ -10,7 +10,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Set up Go
       uses: actions/setup-go@v5
@@ -50,6 +50,12 @@ jobs:
 
     - name: Test
       run: make test
+
+    - name: Build production container
+      run: docker build --tag fleet-telemetry:test --file Dockerfile .
+
+    - name: Build Railway container
+      run: docker build --tag fleet-telemetry:railway-test --file Dockerfile.railway .
 
     - name: Integration Test
       run: make integration

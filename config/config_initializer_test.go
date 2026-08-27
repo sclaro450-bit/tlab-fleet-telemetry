@@ -62,6 +62,7 @@ var _ = Describe("Test application config initialization", func() {
 				"queue.buffering.max.messages": float64(1000000),
 			},
 			MetricCollector: noop.NewCollector(),
+			LogLevel:        "info",
 			Records:         map[string][]telemetry.Dispatcher{"V": {"kafka"}},
 		}
 
@@ -77,7 +78,44 @@ var _ = Describe("Test application config initialization", func() {
 
 	It("returns an error if config is not appropriate", func() {
 		_, err := loadTestApplicationConfig(BadTopicConfig)
-		Expect(err).To(MatchError("invalid character '}' looking for beginning of object key string"))
+		Expect(err).To(MatchError(MatchRegexp("decode config file .*invalid character '}' looking for beginning of object key string")))
+	})
+
+	It("applies environment variables after the config file", func() {
+		for name, value := range map[string]string{
+			"HOST":                "0.0.0.0",
+			"PORT":                "9443",
+			"STATUS_PORT":         "9080",
+			"LOG_LEVEL":           "debug",
+			"TELEMETRY_NAMESPACE": "production_tesla",
+			"TLS_CERT_PATH":       "/run/secrets/server.crt",
+			"TLS_KEY_PATH":        "/run/secrets/server.key",
+			"TLS_CA_PATH":         "/run/secrets/client-ca.crt",
+		} {
+			Expect(os.Setenv(name, value)).To(Succeed())
+			defer os.Unsetenv(name)
+		}
+
+		loadedConfig, err := loadTestApplicationConfig(TestSmallConfig)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(loadedConfig.Host).To(Equal("0.0.0.0"))
+		Expect(loadedConfig.Port).To(Equal(9443))
+		Expect(loadedConfig.StatusPort).To(Equal(9080))
+		Expect(loadedConfig.LogLevel).To(Equal("debug"))
+		Expect(loadedConfig.Namespace).To(Equal("production_tesla"))
+		Expect(loadedConfig.TLS).To(Equal(&TLS{
+			CAFile:     "/run/secrets/client-ca.crt",
+			ServerCert: "/run/secrets/server.crt",
+			ServerKey:  "/run/secrets/server.key",
+		}))
+	})
+
+	It("rejects an invalid environment port", func() {
+		Expect(os.Setenv("PORT", "not-a-port")).To(Succeed())
+		defer os.Unsetenv("PORT")
+
+		_, err := loadTestApplicationConfig(TestSmallConfig)
+		Expect(err).To(MatchError(MatchRegexp("invalid PORT .*invalid syntax")))
 	})
 })
 
