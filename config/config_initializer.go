@@ -120,6 +120,9 @@ func validateConfig(config *Config) error {
 // ValidateRuntime verifies values that are mandatory only when the real Tesla
 // listener starts. Unit tools may load partial configs without opening a port.
 func (config *Config) ValidateRuntime() error {
+	if strings.TrimSpace(os.Getenv("ACME_DOMAIN")) != "" {
+		return nil
+	}
 	if config.TLS == nil {
 		return errors.New("missing TLS configuration: Tesla Fleet Telemetry requires direct mTLS")
 	}
@@ -170,6 +173,9 @@ func loadConfigFlags() string {
 }
 
 func applyEnvironmentOverrides(config *Config) error {
+	if strings.TrimSpace(os.Getenv("ACME_DOMAIN")) != "" && config.TLS == nil {
+		config.TLS = &TLS{}
+	}
 	if value := strings.TrimSpace(os.Getenv("HOST")); value != "" {
 		config.Host = value
 	}

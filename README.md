@@ -37,6 +37,10 @@ Supported runtime overrides:
 | `TLS_KEY_PATH` | Mounted server private key | config file value |
 | `TLS_CERT_PEM` | Certificate chain injected as a secret variable | empty |
 | `TLS_KEY_PEM` | Private key injected as a secret variable | empty |
+| `ACME_DOMAIN` | Public telemetry hostname for automatic certificates | empty |
+| `ACME_EMAIL` | ACME account contact email | empty |
+| `CLOUDFLARE_API_TOKEN` | Scoped Cloudflare token (`Zone Read`, `DNS Write`) | empty |
+| `ACME_STORAGE_PATH` | Persistent certificate and ACME account storage | `/data/certmagic` |
 | `TLS_CA_PATH` | Optional additional client CA bundle | empty |
 
 Inject the TLS certificate and private key as Railway secret variables using
@@ -45,6 +49,13 @@ Never store private keys, tokens, or certificates in Git. The
 container runs as a non-root user and exposes a local `/healthz` endpoint on
 `STATUS_PORT`; its Docker health check becomes healthy only after configuration,
 dispatchers, and the mTLS listener are initialized.
+
+For Railway, mount a persistent volume at `/data/certmagic`, set
+`ACME_DOMAIN`, `ACME_EMAIL`, and `CLOUDFLARE_API_TOKEN`, and leave the
+Cloudflare hostname as DNS-only. The listener obtains a publicly trusted
+certificate with DNS-01 before opening the Tesla mTLS port and renews it
+automatically. Explicit `TLS_CERT_PATH`/`TLS_KEY_PATH` or inline PEM variables
+take precedence over ACME.
 
 Fleet Telemetry is a server reference implementation for Tesla's telemetry protocol. It is the best way to get data from Tesla vehicles. Owners can allow registered applications to receive telemetry securely and directly from their vehicles. This reference implementation can be used by individual owners as is or by fleet operators who can extend it to aggregate data accross their fleet.
 

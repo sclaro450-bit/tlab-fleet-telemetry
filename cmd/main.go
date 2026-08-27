@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/teslamotors/fleet-telemetry/config"
 	logrus "github.com/teslamotors/fleet-telemetry/logger"
 	"github.com/teslamotors/fleet-telemetry/server/airbrake"
+	"github.com/teslamotors/fleet-telemetry/server/certificates"
 	"github.com/teslamotors/fleet-telemetry/server/monitoring"
 	"github.com/teslamotors/fleet-telemetry/server/streaming"
 )
@@ -73,6 +75,14 @@ func startServer(config *config.Config, airbrakeNotifier *gobrake.Notifier, logg
 		monitoring.StartServerMetrics(config, logger, registry)
 	}
 
+	serverTLSConfig, err := config.ExtractServiceTLSConfig(logger)
+	if err != nil {
+		return fmt.Errorf("CONFIGURATION ERROR: initialize Tesla mTLS client verification: %w", err)
+	}
+	if err := configureServerCertificate(config, serverTLSConfig, logger); err != nil {
+		return err
+	}
+
 	dispatchers, producerRules, err := config.ConfigureProducers(airbrakeHandler, logger, false)
 	if err != nil {
 		return err
@@ -82,14 +92,7 @@ func startServer(config *config.Config, airbrakeNotifier *gobrake.Notifier, logg
 		return err
 	}
 
-	if server.TLSConfig, err = config.ExtractServiceTLSConfig(logger); err != nil {
-		return fmt.Errorf("CONFIGURATION ERROR: initialize Tesla mTLS client verification: %w", err)
-	}
-	serverCertificate, err := tls.LoadX509KeyPair(config.TLS.ServerCert, config.TLS.ServerKey)
-	if err != nil {
-		return fmt.Errorf("CONFIGURATION ERROR: load TLS certificate and private key: %w", err)
-	}
-	server.TLSConfig.Certificates = []tls.Certificate{serverCertificate}
+	server.TLSConfig = serverTLSConfig
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
 		return fmt.Errorf("telemetry listener bind failed on %s: %w", server.Addr, err)
@@ -138,4 +141,38 @@ func startServer(config *config.Config, airbrakeNotifier *gobrake.Notifier, logg
 		return fmt.Errorf("telemetry listener failed on %s: %w", server.Addr, err)
 	}
 	return err
+}
+
+func configureServerCertificate(serviceConfig *config.Config, tlsConfig *tls.Config, logger *logrus.Logger) error {
+	acmeOptions, acmeRequested, err := certificates.ACMEOptionsFromEnvironment()
+	if err != nil {
+		return fmt.Errorf("CONFIGURATION ERROR: configure ACME: %w", err)
+	}
+
+	staticTLSExplicitlyConfigured := strings.TrimSpace(os.Getenv("TLS_CERT_PATH")) != "" ||
+		strings.TrimSpace(os.Getenv("TLS_KEY_PATH")) != "" ||
+		os.Getenv("TLS_CERT_PEM") != "" || os.Getenv("TLS_KEY_PEM") != ""
+	if acmeRequested && !staticTLSExplicitlyConfigured {
+		logger.ActivityLog("acme_certificate_management_starting", logrus.LogInfo{
+			"domain":       acmeOptions.Domain,
+			"storage_path": acmeOptions.StoragePath,
+		})
+		obtainContext, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		manager, manageErr := acmeOptions.Manage(obtainContext)
+		if manageErr != nil {
+			return fmt.Errorf("CONFIGURATION ERROR: %w", manageErr)
+		}
+		tlsConfig.GetCertificate = manager.GetCertificate
+		logger.ActivityLog("acme_certificate_ready", logrus.LogInfo{"domain": acmeOptions.Domain})
+		return nil
+	}
+
+	serverCertificate, err := tls.LoadX509KeyPair(serviceConfig.TLS.ServerCert, serviceConfig.TLS.ServerKey)
+	if err != nil {
+		return fmt.Errorf("CONFIGURATION ERROR: load TLS certificate and private key: %w", err)
+	}
+	tlsConfig.Certificates = []tls.Certificate{serverCertificate}
+	logger.ActivityLog("static_tls_certificate_loaded", nil)
+	return nil
 }

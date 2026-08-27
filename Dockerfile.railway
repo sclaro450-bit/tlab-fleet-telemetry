@@ -25,6 +25,7 @@ ENV CGO_LDFLAGS="-lstdc++"
 
 RUN make build
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /go/bin/healthcheck ./cmd/healthcheck
+RUN mkdir -p /tmp/acme-storage && touch /tmp/acme-storage/.keep
 
 FROM gcr.io/distroless/cc-debian12:nonroot
 WORKDIR /
@@ -32,6 +33,7 @@ WORKDIR /
 COPY --from=build --chown=nonroot:nonroot /go/bin/fleet-telemetry /fleet-telemetry
 COPY --from=build --chown=nonroot:nonroot /go/bin/healthcheck /healthcheck
 COPY --from=build --chown=nonroot:nonroot /go/src/fleet-telemetry/config/config.json /etc/fleet-telemetry/config.json
+COPY --from=build --chown=nonroot:nonroot /tmp/acme-storage /data/certmagic
 
 EXPOSE 443 8080
 
