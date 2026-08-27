@@ -55,10 +55,30 @@ fi
 [ -s "$cert_file" ] || configuration_error "ACME certificate was not created"
 [ -s "$cert_key" ] || configuration_error "ACME certificate key was not created"
 
+openssl x509 -in "$cert_file" -noout >/dev/null 2>&1 \
+  || configuration_error "ACME certificate is not valid PEM"
+cert_public_fingerprint=$(openssl x509 -in "$cert_file" -pubkey -noout 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | sha256sum | cut -d' ' -f1)
+key_public_fingerprint=$(openssl pkey -in "$cert_key" -pubout -outform DER 2>/dev/null | sha256sum | cut -d' ' -f1)
+[ "$cert_public_fingerprint" = "$key_public_fingerprint" ] \
+  || configuration_error "ACME certificate and TLS private key do not match"
+
 export TESLA_HTTP_PROXY_TLS_CERT="$cert_file"
 export TESLA_HTTP_PROXY_TLS_KEY="$cert_key"
 
 chown -R tesla:tesla /run/tesla "$ACME_STORAGE"
 
 echo "Starting Tesla Vehicle Command Proxy on 0.0.0.0:${TESLA_HTTP_PROXY_PORT}"
-exec su-exec tesla:tesla /usr/local/bin/tesla-http-proxy
+set +e
+su-exec tesla:tesla /usr/local/bin/tesla-http-proxy \
+  -key-file "$TESLA_KEY_FILE" \
+  -cert "$cert_file" \
+  -tls-key "$cert_key" \
+  -host 0.0.0.0 \
+  -port "$TESLA_HTTP_PROXY_PORT" \
+  -timeout "${TESLA_HTTP_PROXY_TIMEOUT:-15s}" \
+  -verbose
+proxy_status=$?
+set -e
+
+echo "FATAL: Tesla Vehicle Command Proxy exited with status ${proxy_status}" >&2
+exit "$proxy_status"
