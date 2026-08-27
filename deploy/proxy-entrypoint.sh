@@ -71,6 +71,7 @@ echo "Starting Tesla Vehicle Command Proxy on 0.0.0.0:${TESLA_HTTP_PROXY_PORT}"
 set +e
 su-exec tesla:tesla /usr/local/bin/tesla-http-proxy \
   -key-file "$TESLA_KEY_FILE" \
+  -disable-session-cache \
   -cert "$cert_file" \
   -tls-key "$cert_key" \
   -host 0.0.0.0 \
@@ -80,5 +81,5 @@ su-exec tesla:tesla /usr/local/bin/tesla-http-proxy \
 proxy_status=$?
 set -e
 
-echo "FATAL: Tesla Vehicle Command Proxy exited with status ${proxy_status}" >&2
+echo "FATAL_STATUS_${proxy_status}: Tesla Vehicle Command Proxy exited" >&2
 exit "$proxy_status"
