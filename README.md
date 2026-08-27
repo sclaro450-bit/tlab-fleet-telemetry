@@ -12,10 +12,16 @@ from Tesla vehicles. It must run on a persistent service with a stable public
 TCP/TLS endpoint. Vercel is suitable for a dashboard, OAuth callbacks, and a
 control-plane API, but it is not the telemetry ingestion listener.
 
-This repository includes `Dockerfile.railway` and `railway.json` for the
-persistent listener. Configure Railway to use a TCP/custom-domain endpoint and
-make the public Tesla telemetry endpoint reachable on the port registered in
-the vehicle's `fleet_telemetry_config` (normally 443).
+The default `Dockerfile` runs a Vercel-compatible HTTP control plane whose
+`/healthz` endpoint verifies the public Railway listener's DNS, TCP reachability,
+and trusted TLS certificate. It never simulates telemetry or terminates Tesla
+vehicle connections. Set `TELEMETRY_ENDPOINT` to the public `host:port`; it
+defaults to `telemetry.tlabcontrol.com:37532` for this deployment.
+
+`Dockerfile.railway` and `railway.json` run the persistent listener. Configure
+Railway to use a TCP/custom-domain endpoint and make the public Tesla telemetry
+endpoint reachable on the port registered in the vehicle's
+`fleet_telemetry_config`.
 
 Configuration precedence is:
 
